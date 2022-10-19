@@ -1,0 +1,426 @@
+
+//set your clock speed
+#define F_CPU 8000000
+
+// Standard Input/Output functions 1284
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+char tmp[16];
+byte data[16];
+byte dataIndex;
+
+#define start_length 8
+#define ONE_SIZE 4
+#define ZERO_SIZE 1
+
+#define BIT_IS_SET(byte, bit) (byte & (1 << bit))
+#define BIT_IS_CLEAR(byte, bit) (!(byte & (1 << bit)))
+
+#define VFD_test 10
+#define VFD_in 7
+#define VFD_clk 8
+#define VFD_stb 9
+#define VFD_reset 11
+#define VFD_bit8 4
+
+#define isLow() (!(PIND&~_BV(PIND2)))
+  
+  #define BIN(x) \
+  ( ((0x##x##L & 0x00000001L) ? 0x01 : 0) \
+  | ((0x##x##L & 0x00000010L) ? 0x02 : 0) \
+  | ((0x##x##L & 0x00000100L) ? 0x04 : 0) \
+  | ((0x##x##L & 0x00001000L) ? 0x08 : 0) \
+  | ((0x##x##L & 0x00010000L) ? 0x10 : 0) \
+  | ((0x##x##L & 0x00100000L) ? 0x20 : 0) \
+  | ((0x##x##L & 0x01000000L) ? 0x40 : 0) \
+  | ((0x##x##L & 0x10000000L) ? 0x80 : 0))
+
+/*************************************************************************/
+/**************************** Start VFD Zone *****************************/
+/*************************************************************************/
+void Futaba_init(void){
+  unsigned char i;
+
+  _delay_ms(300); //power_up delay
+
+  // set GPO pins to low
+  
+  cmd_with_stb(0b01000000); //
+  _delay_us(60);
+  
+  // Configure VFD display (number of grids)
+  
+  cmd_with_stb(0b01100100); //(0b01100110); //14 grids  (0b01100111) //15 grids  //bin(00000001) 9grids
+  _delay_us(60);
+  
+
+  // set DIMM/PWM to value
+  
+  cmd_with_stb((0b01010000) | 7); //(0b01010000) | 7); //0 min - 7 max  )(0b01010000)
+  _delay_us(60);
+  
+  
+  // switch off extra "ADRAM"
+  
+  cmd_with_stb(0b00110000); //
+  for(i=0;i<12;i++)
+  {
+    cmd_with_stb(0x20);
+  }
+  _delay_us(60);
+  
+  // test mode: light all
+  
+  cmd_with_stb(0b01110011); //
+  _delay_us(60);
+  
+  // normal mode
+
+  cmd_with_stb(0b01110000); //((0b01110000); //test off-normal mode on  (0b01110000)
+  _delay_us(60);
+}
+void cmd_without_stb(unsigned char a){
+  // send without stb
+  unsigned char transmit = 7; //define our transmit pin
+  unsigned char data = 170; //value to transmit, binary 10101010
+  unsigned char mask = 1; //our bitmask
+  
+  data=a;
+  //This don't send the strobe signal, to be used in burst data send
+   for (mask = 00000001; mask>0; mask <<= 1) { //iterate through bit mask
+     digitalWrite(VFD_clk, LOW);
+     if (data & mask){ // if bitwise AND resolves to true
+        digitalWrite(VFD_in, HIGH);
+     }
+     else{ //if bitwise and resolves to false
+       digitalWrite(VFD_in, LOW);
+     }
+    delayMicroseconds(5);
+    digitalWrite(VFD_clk, HIGH);
+    delayMicroseconds(5);
+   }
+}
+void cmd_with_stb(unsigned char a){
+  // send with stb
+  unsigned char transmit = 7; //define our transmit pin
+  unsigned char data = 170; //value to transmit, binary 10101010
+  unsigned char mask = 1; //our bitmask
+  
+  data=a;
+  
+  //This send the strobe signal
+  //Note: The first byte input at in after the STB go LOW is interpreted as a command!!!
+  digitalWrite(VFD_stb, LOW);
+  delayMicroseconds(1);
+         for (mask = 00000001; mask>0; mask <<= 1) { //iterate through bit mask
+           digitalWrite(VFD_clk, LOW);
+           delayMicroseconds(1);
+                   if (data & mask){ // if bitwise AND resolves to true
+                      digitalWrite(VFD_in, HIGH);
+                   }
+                   else{ //if bitwise and resolves to false
+                     digitalWrite(VFD_in, LOW);
+                   }
+          digitalWrite(VFD_clk, HIGH);
+          delayMicroseconds(1);
+         }
+   digitalWrite(VFD_stb, HIGH);
+   delayMicroseconds(1);
+}
+void send_data(unsigned char a){
+  unsigned char data = 170; //value to transmit, binary 10101010
+  unsigned char mask = 1; //our bitmask
+  
+  data=a;
+  //This don't send the strobe signal, to be used in burst data send
+  for (mask = 00000001; mask>0; mask <<= 1) { //iterate through bit mask
+    PORTB &= ~(1 << VFD_clk);
+    _delay_us(60);
+    if (data & mask){ // if bitwise AND resolves to true
+      PORTD |= (1 << VFD_in);
+    }
+    else{ //if bitwise and resolves to false
+      PORTD &= ~(1 << VFD_in);
+    }
+    _delay_us(60);
+    PORTB |= (1 << VFD_clk);
+    _delay_us(60);
+    //PORTB = (0 << VFD_clk);
+    //_delay_us(60);
+  }
+  //PORTB |= (1 << VFD_clk);
+}
+void Futaba_print(unsigned char address, unsigned char *text){
+  unsigned char c;
+  digitalWrite(VFD_stb, LOW);
+  cmd_without_stb((0b00010000) | (address & 0x0F)); //((0b00010000)) + (address & 0x0F) );//)(0b00010000
+        while ( c = (*text++) )
+        {
+          cmd_without_stb(c); // & 0x7F); // 0x7F to 7bits ASCII code
+        }
+  digitalWrite(VFD_stb, HIGH);
+  _delay_us(60);
+}
+void send_bits(unsigned char a){
+  unsigned char mask = 1; //our bitmask
+  unsigned char data;
+  data=a;
+  PORTB |= (1 << VFD_clk);
+  _delay_us(60);
+  for (mask = 0b00000001; mask>0; mask <<= 1) { //iterate through bit mask
+    PORTB &= ~(1 << VFD_clk);
+    _delay_us(60);
+          if (data & mask){ // if bitwise AND resolves to true
+            PORTD |= (1 << VFD_in);
+          }
+          else{ //if bitwise and resolves to false
+            PORTD &= ~(1 << VFD_in);
+          }
+          _delay_us(60);
+          PORTB |= (1 << VFD_clk);
+          _delay_us(60);
+          }
+  // PORTB |= (1 << VFD_clk);
+  // _delay_us(10);
+}
+unsigned char DigitTo7SegEncoder( unsigned char digit, unsigned char common){
+ unsigned char SegVal;
+   
+   switch(digit)
+   {
+     case 0:  if(common == 1) SegVal = 0b00111111;
+     else     SegVal = ~0b00111111;
+     break;
+     case 1:  if(common == 1) SegVal = 0b00000110;
+     else     SegVal = ~0b00000110;
+     break;
+     case 2:  if(common == 1) SegVal = 0b01011011;
+     else     SegVal = ~0b01011011;
+     break;
+     case 3:  if(common == 1) SegVal = 0b01001111;
+     else     SegVal = ~0b01001111;
+     break;
+     case 4:  if(common == 1) SegVal = 0b01100110;
+     else     SegVal = ~0b01100110;
+     break;
+     case 5:  if(common == 1) SegVal = 0b01101101;
+     else     SegVal = ~0b01101101;
+     break;
+     case 6:  if(common == 1) SegVal = 0b01111101;
+     else     SegVal = ~0b01111101;
+     break;
+     case 7:  if(common == 1) SegVal = 0b00000111;
+     else     SegVal = ~0b00000111;
+     break;
+     case 8:  if(common == 1) SegVal = 0b01111111;
+     else     SegVal = ~0b01111111;
+     break;
+     case 9:  if(common == 1) SegVal = 0b01101111;
+     else     SegVal = ~0b01101111;
+   }
+   return SegVal;
+ } 
+void binaryToHex(const char *inStr, char *outStr) {
+   // outStr must be at least strlen(inStr)/4 + 1 bytes.
+   static char hex[] = "0123456789ABCDEF";
+   int len = strlen(inStr) / 4;
+   int i = strlen(inStr) % 4;
+   char current = 0;
+     if(i) { // handle not multiple of 4
+             while(i--) {
+               current = (current << 1) + (*inStr - '0');
+               inStr++;
+             }
+       *outStr = hex[current];
+       ++outStr;
+     }
+           while(len--) {
+             current = 0;
+             for(i = 0; i < 4; ++i) {
+               current = (current << 1) + (*inStr - '0');
+               inStr++;
+             }
+             *outStr = hex[current];
+             ++outStr;
+           }
+   *outStr = 0; // null byte
+ }
+void strrevert1(char *string){
+   // Inverter the contents of pointer of string
+   // and let it reverted until the next call of
+   // function! exp: char letter[16] = "jogos.....tarde";
+   // To do a declaration of pointer:  char* ptr=letter;
+   // don't forget the null char "\0", this is a 1 more char
+   // presente on the string.
+   
+   int len = 0;
+   while (string[len])
+   len++;
+
+   int down = 0;
+   int up = len - 1;
+
+         while (up > down)
+         {
+           char c = string[down];
+           string[down++] = string[up];
+           string[up--] = c;
+         }
+ }
+void init_16BD08GINK(){
+int i;
+digitalWrite(VFD_reset, HIGH);
+    for (i=0;i<20;i++)
+    {
+   delayMicroseconds(5);
+    }
+  digitalWrite(VFD_reset, LOW);
+    for (i=0;i<20;i++)
+    {
+    delayMicroseconds(5);
+    }
+  digitalWrite(VFD_reset, HIGH);
+  
+            for (i=0;i<4;i++)
+            {
+            digitalWrite(VFD_bit8, HIGH);
+            delay(50);
+            digitalWrite(VFD_bit8, LOW);
+            delay(50);
+            }
+            
+  //cmd1 Configure general output port set command
+  // peso: b7,b6,b5,b4,b3,b2,b1,b0
+  Futaba_send_cmd(0b01000000);//(BIN(01000000)); //(BIN(01000000)));//  (0b01000000)
+  delay(5);  // 5/16 5 grids & 16 segments
+  delayMicroseconds(1);
+  //cmd2 Number of digits set
+  Futaba_send_cmd(0b01100000);//(BIN(01000000)); //(BIN(01000000)));//  (0b01000000)
+  delay(5); 
+  delayMicroseconds(1);
+  //cmd3 display dutty set command
+  Futaba_send_cmd(0b01010000);//(BIN(01000000)); //(BIN(01000000)));//  (0b01000000)
+  delay(5);
+  delayMicroseconds(1);
+  
+}
+void Futaba_TST(){
+  cmd_with_stb(0b01010111);  // set light
+  delay(10);
+  cmd_with_stb(0b01110011); //All on
+  delay(500);
+  cmd_with_stb(0b01110001); //All off
+  delay(500); 
+  cmd_with_stb(0b01110011); //All on
+  delay(500);
+  cmd_with_stb(0b01110001); //All off
+  delay(500);
+  cmd_with_stb(0b01110011); //All on
+  delay(500);
+  cmd_with_stb(0b01110001); //All off
+  delay(500); 
+  cmd_with_stb(0b01110011); //All on
+  delay(500);
+  cmd_with_stb(0b01110001); //All off
+  delay(500);
+  cmd_with_stb(0b01110000); //Normal display
+//
+}
+//###################################################
+void Futaba_send_cmd(unsigned char a){
+int i,j;
+//VFD_blk=LOW;
+digitalWrite(VFD_clk, HIGH);
+digitalWrite(VFD_in, LOW);
+delay(5);
+digitalWrite(VFD_stb, LOW);
+delay(5);
+  for (i=0; i<8;i++) // 8 bit 0-7 // aqui inverti para ficar com 0x88 correccto
+  {
+  digitalWrite(VFD_clk,LOW);
+  delay(5);//DelayUs(24);
+//  VFD_in=((a >> i)& 1);
+  delay(5);//DelayUs(24);
+  digitalWrite(VFD_clk,HIGH);
+  delay(5);//DelayUs(24);
+  }
+//VFD_blk=HIGH;
+digitalWrite(VFD_clk, HIGH);
+digitalWrite(VFD_in, LOW);
+delay(5);
+digitalWrite(VFD_stb, HIGH);
+delay(5);
+}
+//*******************************************************
+void Futaba_send_cmd_withoutSTB(unsigned char a){
+int i;
+digitalWrite(VFD_in, LOW);
+digitalWrite(VFD_clk, HIGH);
+//aqui nao tenho blk para permitir o incremento directo
+  for (i=0; i<8;i++) // 8 bit 0-7 // aqui inverti para ficar com 0x88 correccto
+  {
+  // exp: com i=0, uso de ++; 0x31 sai 13, 0x38 sai 83, 0b10001111 sai F0
+  digitalWrite(VFD_clk, LOW);
+  delay(5);//DelayUs(24);
+//  VFD_in=((a >> i)& 1);
+  //VFD_in=(a>>=1);
+  delay(5);//DelayUs(24);
+  digitalWrite(VFD_clk, HIGH);
+  delay(5);//DelayUs(24);
+  }
+digitalWrite(VFD_in, LOW);
+digitalWrite(VFD_clk, HIGH);
+}
+//****************************************************
+void setup() {
+// put your setup code here, to run once:
+// initialize digital pin LED_BUILTIN as an output.
+  pinMode(LED_BUILTIN, OUTPUT);
+ //pinMode(10, OUTPUT);
+  Serial.begin(9600);
+
+//Set PORT, This set is very importante... check it!
+DDRD = 0xFF;  // IMPORTANT: from pin 0 to 7 is port D, from pin 8 to 13 is port B
+PORTD=0x00;
+DDRB =0xFF;
+PORTB =0x00;
+
+init_16BD08GINK();
+}
+void loop(){ 
+Futaba_TST(); //Do one test of all pixels ON on the VFD.
+//The code stay running on this cycle While...
+ while(1){
+        strcpy(data, "    HI FOLKS    ");
+          //strrevert1(data);
+          Futaba_print(0,data);
+          delay(1000);
+        strcpy(data, "                ");
+          //strrevert1(data);
+          Futaba_print(0,data);
+          delay(500);
+        strcpy(data, "  16-BD-08GINK  ");
+          //strrevert1(data);
+          Futaba_print(0,data);
+          delay(1000);
+        strcpy(data, "                ");
+          //strrevert1(data);
+          Futaba_print(0,data);
+        strcpy(data, "  FUTABA  ");
+          //strrevert1(data);
+          Futaba_print(0,data);
+          delay(1000);
+        strcpy(data, "****************");
+          //strrevert1(data);
+          Futaba_print(0,data);
+          delay(250);
+        strcpy(data, "A:0xFFFF, D:0x55");
+          //strrevert1(data);
+          Futaba_print(0,data);
+          //Futaba_cls();
+          //Futaba_send_cmd(0B00000001);
+          delay(2000);
+       }
+}
